@@ -8,8 +8,9 @@ import yfinance as yf
 
 class RatioResult(TypedDict):
     ticker: str
-    pe_ratio: Optional[float]
-    peg_ratio: Optional[float]
+    trailing_pe_ratio: Optional[float]
+    forward_pe_ratio: Optional[float]
+    trailing_peg_ratio: Optional[float]
 
 
 def _get_ratios_for_ticker(ticker: str) -> RatioResult:
@@ -26,13 +27,15 @@ def _get_ratios_for_ticker(ticker: str) -> RatioResult:
     except AttributeError:
         info = getattr(yf_ticker, "info", {}) or {}
 
-    pe = info.get("trailingPE") or info.get("forwardPE")
-    peg = info.get("trailingPegRatio")
+    trailing_pe_ratio = info.get("trailingPE")
+    forward_pe_ratio = info.get("forwardPE")
+    trailing_peg_ratio = info.get("trailingPegRatio")
 
     return {
         "ticker": ticker,
-        "pe_ratio": pe,
-        "peg_ratio": peg,
+        "trailing_pe_ratio": trailing_pe_ratio,
+        "forward_pe_ratio": forward_pe_ratio,
+        "trailing_peg_ratio": trailing_peg_ratio,
     }
 
 
@@ -106,7 +109,7 @@ def process_tickers_file(path: str) -> None:
     """
     pairs = load_tickers_from_csv(path)
     print(f"[Processing] {len(pairs)} tickers from CSV '{path}':")
-    print("type,ticker,pe_ratio,peg_ratio")
+    print("type,ticker,trailing_pe_ratio,forward_pe_ratio,trailing_peg_ratio")
 
     for type_lower, ticker in pairs:
         if type_lower == "stock":
@@ -114,10 +117,25 @@ def process_tickers_file(path: str) -> None:
         else:
             ratios = get_etf_ratios(ticker)
 
+        trailing_pe = (
+            str(ratios["trailing_pe_ratio"])
+            if ratios["trailing_pe_ratio"] is not None
+            else "N/A"
+        )
+        forward_pe = (
+            str(ratios["forward_pe_ratio"])
+            if ratios["forward_pe_ratio"] is not None
+            else "N/A"
+        )
+        trailing_peg = (
+            str(ratios["trailing_peg_ratio"])
+            if ratios["trailing_peg_ratio"] is not None
+            else "N/A"
+        )
+
         print(
             f"{type_lower},{ratios['ticker']},"
-            f"{ratios['pe_ratio'] if ratios['pe_ratio'] is not None else ''},"
-            f"{ratios['peg_ratio'] if ratios['peg_ratio'] is not None else ''}"
+            f"{trailing_pe},{forward_pe},{trailing_peg}"
         )
 
 
@@ -129,15 +147,28 @@ def process_tickers_args(tickers: List[str]) -> None:
     """
     normalized = [t.strip().upper() for t in tickers if t.strip()]
     print(f"Processing {len(normalized)} tickers from CLI arguments:")
-    print("type,ticker,pe_ratio,peg_ratio")
+    print("type,ticker,trailing_pe_ratio,forward_pe_ratio,trailing_peg_ratio")
 
     for ticker in normalized:
         ratios = get_stock_ratios(ticker)
-        print(
-            f"stock,{ratios['ticker']},"
-            f"{ratios['pe_ratio'] if ratios['pe_ratio'] is not None else ''},"
-            f"{ratios['peg_ratio'] if ratios['peg_ratio'] is not None else ''}"
+
+        trailing_pe = (
+            str(ratios["trailing_pe_ratio"])
+            if ratios["trailing_pe_ratio"] is not None
+            else "N/A"
         )
+        forward_pe = (
+            str(ratios["forward_pe_ratio"])
+            if ratios["forward_pe_ratio"] is not None
+            else "N/A"
+        )
+        trailing_peg = (
+            str(ratios["trailing_peg_ratio"])
+            if ratios["trailing_peg_ratio"] is not None
+            else "N/A"
+        )
+
+        print(f"stock,{ratios['ticker']},{trailing_pe},{forward_pe},{trailing_peg}")
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
