@@ -1,17 +1,14 @@
-from typing import Optional, TypedDict, List, Tuple
-import argparse
 import csv
-from pathlib import Path
-
+import argparse
 import yfinance as yf
-
+from pathlib import Path
+from typing import Optional, TypedDict, List, Tuple
 
 class RatioResult(TypedDict):
     ticker: str
     trailing_pe_ratio: Optional[float]
     forward_pe_ratio: Optional[float]
     trailing_peg_ratio: Optional[float]
-    forward_peg_ratio: Optional[float]
 
 
 def _get_ratios_for_ticker(ticker: str) -> RatioResult:
@@ -31,24 +28,12 @@ def _get_ratios_for_ticker(ticker: str) -> RatioResult:
     trailing_pe_ratio = info.get("trailingPE")
     forward_pe_ratio = info.get("forwardPE")
     trailing_peg_ratio = info.get("trailingPegRatio")
-     # Forward PEG ratio is typically defined as:
-     #   forward_peg = forward_P/E / expected_earnings_growth_rate(%)
-     # If the API provides growth as a decimal (e.g. 0.15 for 15%),
-     # we convert it to percent by multiplying by 100.
-    forward_peg_ratio: Optional[float] = None
-    earnings_growth = info.get("earningsGrowth") or info.get("earningsQuarterlyGrowth")
-    if forward_pe_ratio is not None and earnings_growth not in (None, 0):
-        try:
-            forward_peg_ratio = forward_pe_ratio / (earnings_growth * 100.0)
-        except TypeError:
-            forward_peg_ratio = None
 
     return {
         "ticker": ticker,
-        "trailing_pe_ratio": trailing_pe_ratio,
-        "forward_pe_ratio": forward_pe_ratio,
-        "trailing_peg_ratio": trailing_peg_ratio,
-        "forward_peg_ratio": forward_peg_ratio,
+        "trailing_pe_ratio": round(trailing_pe_ratio, 2) if trailing_pe_ratio is not None else None,
+        "forward_pe_ratio": round(forward_pe_ratio, 2) if forward_pe_ratio is not None else None,
+        "trailing_peg_ratio": round(trailing_peg_ratio, 2) if trailing_peg_ratio is not None else None,
     }
 
 
@@ -122,11 +107,7 @@ def process_tickers_file(path: str) -> None:
     """
     pairs = load_tickers_from_csv(path)
     print(f"[Processing] {len(pairs)} tickers from CSV '{path}':")
-    print(
-        "type,ticker,"
-        "trailing_pe_ratio,forward_pe_ratio,"
-        "trailing_peg_ratio,forward_peg_ratio"
-    )
+    print("type,ticker,trailing_pe_ratio,forward_pe_ratio,trailing_peg_ratio")
 
     for type_lower, ticker in pairs:
         if type_lower == "stock":
@@ -149,16 +130,10 @@ def process_tickers_file(path: str) -> None:
             if ratios["trailing_peg_ratio"] is not None
             else "N/A"
         )
-        forward_peg = (
-            str(ratios["forward_peg_ratio"])
-            if ratios["forward_peg_ratio"] is not None
-            else "N/A"
-        )
 
         print(
             f"{type_lower},{ratios['ticker']},"
-            f"{trailing_pe},{forward_pe},"
-            f"{trailing_peg},{forward_peg}"
+            f"{trailing_pe},{forward_pe},{trailing_peg}"
         )
 
 
@@ -170,11 +145,7 @@ def process_tickers_args(tickers: List[str]) -> None:
     """
     normalized = [t.strip().upper() for t in tickers if t.strip()]
     print(f"Processing {len(normalized)} tickers from CLI arguments:")
-    print(
-        "type,ticker,"
-        "trailing_pe_ratio,forward_pe_ratio,"
-        "trailing_peg_ratio,forward_peg_ratio"
-    )
+    print("type,ticker,trailing_pe_ratio,forward_pe_ratio,trailing_peg_ratio")
 
     for ticker in normalized:
         ratios = get_stock_ratios(ticker)
@@ -194,16 +165,10 @@ def process_tickers_args(tickers: List[str]) -> None:
             if ratios["trailing_peg_ratio"] is not None
             else "N/A"
         )
-        forward_peg = (
-            str(ratios["forward_peg_ratio"])
-            if ratios["forward_peg_ratio"] is not None
-            else "N/A"
-        )
 
         print(
             f"stock,{ratios['ticker']},"
-            f"{trailing_pe},{forward_pe},"
-            f"{trailing_peg},{forward_peg}"
+            f"{trailing_pe},{forward_pe},{trailing_peg}"
         )
 
 
