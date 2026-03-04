@@ -27,7 +27,7 @@ def _get_ratios_for_ticker(ticker: str) -> RatioResult:
         info = getattr(yf_ticker, "info", {}) or {}
 
     pe = info.get("trailingPE") or info.get("forwardPE")
-    peg = info.get("pegRatio")
+    peg = info.get("trailingPegRatio")
 
     return {
         "ticker": ticker,
@@ -105,7 +105,7 @@ def process_tickers_file(path: str) -> None:
     Read tickers from a CSV file and print their ratios.
     """
     pairs = load_tickers_from_csv(path)
-    print(f"Processing {len(pairs)} tickers from CSV '{path}':")
+    print(f"[Processing] {len(pairs)} tickers from CSV '{path}':")
     print("type,ticker,pe_ratio,peg_ratio")
 
     for type_lower, ticker in pairs:
