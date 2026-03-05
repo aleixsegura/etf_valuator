@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Iterable
 from urllib.parse import urljoin
 
@@ -51,6 +52,7 @@ class OfficialETFScraper:
         "premium discount": "premium_discount",
         "number of holdings": "holdings_count",
         "holdings": "holdings_count",
+        "inception date": "inception_date",
     }
 
     METRIC_PATTERNS: dict[str, Iterable[re.Pattern[str]]] = {
@@ -120,6 +122,16 @@ class OfficialETFScraper:
         metrics.update(self._extract_from_patterns(text))
         metrics.update(self._extract_from_tables(soup))
         metrics.update(self._extract_from_embedded_json(soup))
+        dataset_metrics, dataset_notes = self._extract_from_dataset_endpoints(
+            soup=soup, base_url=url, headers=headers, timeout=timeout
+        )
+        metrics.update(dataset_metrics)
+        notes.extend(dataset_notes)
+        holdings_metrics, holdings_notes = self._extract_from_holdings_block_endpoint(
+            soup=soup, base_url=url, headers=headers, timeout=timeout
+        )
+        metrics.update(holdings_metrics)
+        notes.extend(holdings_notes)
         artifacts.update(self._extract_artifacts(soup, base_url=url))
         notes.append(f"Official source parsed: {url}")
         return OfficialScrapeResult(metrics=metrics, artifacts=artifacts, notes=notes)
@@ -178,10 +190,32 @@ class OfficialETFScraper:
             "premium_discount",
         }:
             return parse_percent(raw_value)
-        if key in {"pe", "pb", "holdings_count", "duration_years"}:
+        if key in {
+            "pe",
+            "pb",
+            "holdings_count",
+            "duration_years",
+            "market_price",
+            "bid",
+            "ask",
+        }:
             return parse_number_with_suffix(raw_value)
+        if key == "inception_date":
+            return self._parse_date_to_epoch(raw_value)
         if key == "aum":
             return parse_number_with_suffix(raw_value)
+        return None
+
+    def _parse_date_to_epoch(self, raw_value: str) -> float | None:
+        text = raw_value.strip()
+        if not text:
+            return None
+        for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+                return float(dt.timestamp())
+            except ValueError:
+                continue
         return None
 
     def _extract_artifacts(self, soup: Any, base_url: str) -> dict[str, str]:
@@ -286,6 +320,176 @@ class OfficialETFScraper:
             return json.loads(raw)
         except Exception:
             return None
+
+    def _extract_from_dataset_endpoints(
+        self, soup: Any, base_url: str, headers: dict[str, str], timeout: int
+    ) -> tuple[dict[str, float], list[str]]:
+        out: dict[str, float] = {}
+        notes: list[str] = []
+        dataset_urls = self._extract_dataset_urls(soup, base_url=base_url)
+        if not dataset_urls:
+            return out, notes
+
+        try:
+            import requests
+        except Exception as exc:
+            notes.append(f"Dataset endpoint scrape unavailable: {exc}")
+            return out, notes
+
+        for dataset_url in dataset_urls:
+            try:
+                response = requests.get(dataset_url, timeout=timeout, headers=headers)
+                response.raise_for_status()
+                payload = response.json()
+            except Exception as exc:
+                notes.append(f"Dataset endpoint fetch failed ({dataset_url}): {exc}")
+                continue
+
+            parsed = self._extract_metrics_from_dataset_payload(payload)
+            if parsed:
+                notes.append(f"Dataset endpoint parsed: {dataset_url}")
+                out.update(parsed)
+        return out, notes
+
+    def _extract_dataset_urls(self, soup: Any, base_url: str) -> list[str]:
+        urls: list[str] = []
+        seen: set[str] = set()
+        for script in soup.find_all("script"):
+            raw = script.string or script.get_text(strip=True)
+            if not raw or "contentUrl" not in raw:
+                continue
+            payload = self._safe_json_load(raw)
+            if payload is None:
+                continue
+            for key, value in _iter_json_leafs(payload):
+                compact_key = re.sub(r"[^a-zA-Z0-9]+", "", key).lower()
+                if compact_key != "contenturl":
+                    continue
+                if not isinstance(value, str):
+                    continue
+                url = urljoin(base_url, value.strip())
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                urls.append(url)
+        return urls
+
+    def _extract_metrics_from_dataset_payload(self, payload: Any) -> dict[str, float]:
+        out: dict[str, float] = {}
+        if not isinstance(payload, dict):
+            return out
+
+        for raw_key, raw_value in payload.items():
+            label = normalize_label(str(raw_key))
+            metric_key = self._label_to_metric(label)
+            if not metric_key:
+                continue
+            parsed = self._parse_value(metric_key, str(raw_value))
+            if parsed is not None:
+                out[metric_key] = parsed
+
+        holdings_list = payload.get("HoldingsList")
+        if isinstance(holdings_list, list):
+            for row in holdings_list:
+                if not isinstance(row, dict):
+                    continue
+                holdings = row.get("Holdings")
+                if isinstance(holdings, list) and holdings:
+                    out["holdings_count"] = float(len(holdings))
+                    break
+        return out
+
+    def _extract_from_holdings_block_endpoint(
+        self, soup: Any, base_url: str, headers: dict[str, str], timeout: int
+    ) -> tuple[dict[str, float], list[str]]:
+        out: dict[str, float] = {}
+        notes: list[str] = []
+
+        blocks = soup.find_all("ve-holdingsblock")
+        if not blocks:
+            return out, notes
+
+        ticker_tag = soup.find("ve-fundticker")
+        ticker = ""
+        if ticker_tag is not None:
+            ticker = ticker_tag.get_text(strip=True).upper()
+
+        try:
+            import requests
+        except Exception as exc:
+            notes.append(f"Holdings block endpoint scrape unavailable: {exc}")
+            return out, notes
+
+        best_metric: float | None = None
+        best_score: tuple[int, int] | None = None
+        best_url: str | None = None
+
+        for block in blocks:
+            block_id = (block.get("data-blockid") or "").strip()
+            page_id = (block.get("data-pageid") or "").strip()
+            if not block_id or not page_id:
+                continue
+
+            endpoint = (
+                f"/Main/HoldingsBlock/GetContent/?blockid={block_id}&pageid={page_id}"
+            )
+            if ticker:
+                endpoint = f"{endpoint}&ticker={ticker}"
+            url = urljoin(base_url, endpoint)
+
+            try:
+                response = requests.get(url, timeout=timeout, headers=headers)
+                response.raise_for_status()
+                payload = response.json()
+            except Exception as exc:
+                notes.append(f"Holdings block endpoint fetch failed ({url}): {exc}")
+                continue
+
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, dict):
+                continue
+
+            candidate: float | None = None
+            has_explicit_total = 0
+            subtitle = normalize_label(str(data.get("SubTitle") or ""))
+            total_amount = data.get("TotalAmount")
+            if subtitle and total_amount is not None:
+                metric_key = self._label_to_metric(subtitle)
+                if metric_key == "holdings_count":
+                    parsed = self._parse_value(metric_key, str(total_amount))
+                    if parsed is not None:
+                        candidate = parsed
+                        has_explicit_total = 1
+
+            is_top_ten = bool(data.get("IsTopTen"))
+            if candidate is None and not is_top_ten:
+                holdings = data.get("Holdings")
+                if isinstance(holdings, list) and holdings:
+                    candidate = float(len(holdings))
+
+            if candidate is None:
+                continue
+
+            date_score = 0
+            as_of = (data.get("AsOfDate") or "").strip()
+            if as_of:
+                try:
+                    date_score = int(datetime.strptime(as_of, "%m/%d/%Y").strftime("%Y%m%d"))
+                except ValueError:
+                    date_score = 0
+
+            # Prefer explicit totals, then non-top-ten blocks, then most recent AsOf date.
+            rank = (has_explicit_total * 100 + (0 if is_top_ten else 10), date_score)
+            if best_score is None or rank > best_score:
+                best_score = rank
+                best_metric = candidate
+                best_url = url
+
+        if best_metric is not None:
+            out["holdings_count"] = best_metric
+            if best_url:
+                notes.append(f"Holdings block endpoint parsed: {best_url}")
+        return out, notes
 
 
 def _iter_json_leafs(obj: Any, parent: str = ""):

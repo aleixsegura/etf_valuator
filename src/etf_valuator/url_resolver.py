@@ -5,7 +5,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 
 @dataclass
@@ -44,11 +44,19 @@ class OfficialURLResolver:
         ticker = payload.ticker.strip().upper()
         cached = self._cache_get(ticker)
         if cached:
-            return URLResolveOutput(
-                url=cached["url"],
-                method=f"cache:{cached['method']}",
-                confidence=float(cached["confidence"]),
-            )
+            cached_url = str(cached.get("url") or "")
+            if self._validate_url(
+                cached_url,
+                ticker=ticker,
+                issuer_hint=payload.issuer,
+                name_hint=payload.fund_name,
+            ):
+                return URLResolveOutput(
+                    url=cached_url,
+                    method=f"cache:{cached['method']}",
+                    confidence=float(cached["confidence"]),
+                )
+            self._cache_delete(ticker)
 
         if payload.website:
             validated = self._validate_url(
@@ -129,8 +137,8 @@ class OfficialURLResolver:
                 key="vaneck",
                 hints=("vaneck",),
                 search_urls=(
-                    "https://www.vaneck.com/us/en/search/?query={ticker}",
                     "https://www.vaneck.com/us/en/etf/equity/{ticker_lc}/",
+                    "https://www.vaneck.com/us/en/search/?query={ticker}",
                 ),
                 sitemap_urls=("https://www.vaneck.com/sitemap.xml",),
                 allowed_domains=("vaneck.com",),
@@ -239,10 +247,20 @@ class OfficialURLResolver:
     def _validate_url(
         self, url: str, ticker: str, issuer_hint: str | None, name_hint: str | None
     ) -> bool:
+        parsed = urlparse(url)
+        path = parsed.path.lower()
+        query_keys = {k.lower() for k in parse_qs(parsed.query).keys()}
+        if "/search" in path:
+            return False
+        if {"query", "q", "search"} & query_keys and "/etf/" not in path and "/investments/" not in path:
+            return False
+
         content = self._fetch_text(url)
         if not content:
             return False
         lc = content.lower()
+        if "search results" in lc and "/etf/" not in path and "/investments/" not in path:
+            return False
         ticker_ok = ticker.lower() in lc
         etf_ok = any(word in lc for word in ("etf", "exchange traded", "fund"))
         if not (ticker_ok and etf_ok):
@@ -306,6 +324,14 @@ class OfficialURLResolver:
             "confidence": float(confidence),
             "ts": time.time(),
         }
+        self._persist_cache()
+
+    def _cache_delete(self, ticker: str) -> None:
+        if ticker in self._cache:
+            del self._cache[ticker]
+            self._persist_cache()
+
+    def _persist_cache(self) -> None:
         try:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             self.cache_path.write_text(
