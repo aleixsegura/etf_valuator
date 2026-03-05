@@ -253,13 +253,26 @@ class OfficialETFScraper:
                 num = _try_float(value)
                 if num is None:
                     continue
-                if metric_key in percent_like and num <= 1.0:
-                    num *= 100.0
+                if metric_key in percent_like:
+                    num = self._normalize_embedded_percent(metric_key, num)
                 if metric_key in aum_like and 1.0 <= num <= 1e4:
                     # Ignore suspiciously tiny AUM parsed from unrelated fields.
                     continue
                 out.setdefault(metric_key, num)
         return out
+
+    def _normalize_embedded_percent(self, metric_key: str, value: float) -> float:
+        if value > 1.0:
+            return value
+        if metric_key != "expense_ratio":
+            return value * 100.0
+        # Expense ratio appears in both formats across issuers:
+        # - Decimal fraction (0.0003 means 0.03%)
+        # - Percentage points (0.03 already means 0.03%)
+        # Convert only tiny values that are clearly fractions.
+        if 0.0 <= value < 0.02:
+            return value * 100.0
+        return value
 
     def _safe_json_load(self, raw: str) -> Any:
         raw = raw.strip()
