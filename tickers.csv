@@ -1,4 +1,7 @@
 # type,ticker
-stock,AAPL
-stock,MSFT
-etf,VOO
+# VanEck Rare Earths ETF
+etf,REMX
+# iShares Materials SP500 Sector UCITS ETF
+etf,IUMS.L
+# Xtrackers MSCI World Utilities ETF
+etf,XDWU.DE

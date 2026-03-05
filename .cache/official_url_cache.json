@@ -1,0 +1,8 @@
+{
+  "REMX": {
+    "url": "https://www.vaneck.com/us/en/etf/equity/remx/",
+    "method": "adapter_direct:vaneck",
+    "confidence": 0.9,
+    "ts": 1772739017.055706
+  }
+}
