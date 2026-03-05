@@ -2,6 +2,17 @@
 
 Official-source-first ETF valuation engine that estimates whether an ETF looks attractive, neutral, or potentially overvalued based on valuation, cost, portfolio quality, and liquidity signals.
 
+## Disclaimer
+
+This repository is an educational project and not financial advice.
+
+It was developed using agentic software engineering workflows with:
+
+- OpenAI Codex CLI (`gpt-5.3-codex`, medium profile)
+- Cursor
+
+The goal is to learn and practice modern agentic AI software engineering patterns, including tool-driven implementation, iterative validation, and transparent system design.
+
 ## Why This Project
 
 Most ETF tools rely heavily on aggregator APIs. This project flips the priority:
@@ -171,14 +182,3 @@ How to read it:
 - Issuer websites change frequently; parser adjustments are expected.
 - Some metrics are not publicly exposed in HTML/JSON and require document parsing or holdings files.
 - Current score is a practical heuristic, not an investment guarantee.
-
-## Disclaimer
-
-This repository is an educational project and not financial advice.
-
-It was developed using agentic software engineering workflows with:
-
-- OpenAI Codex CLI (`gpt-5.3-codex`, medium profile)
-- Cursor
-
-The goal is to learn and practice modern agentic AI software engineering patterns, including tool-driven implementation, iterative validation, and transparent system design.
